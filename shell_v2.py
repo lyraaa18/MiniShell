@@ -13,6 +13,7 @@ import threading
 from tkinter import simpledialog
 import getpass
 from datetime import datetime
+import psutil
 
 class ImprovedMiniShell:
     def __init__(self, root):
@@ -92,18 +93,43 @@ class ImprovedMiniShell:
         paned = ttk.PanedWindow(self.main_frame, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True, pady=5)
         
-        # Left panel - directory tree
-        tree_frame = ttk.Frame(paned)
-        paned.add(tree_frame, weight=1)
-        
-        # Directory Tree with scrollbar
+        # Left panel - directory + monitor
+        tree_monitor_frame = ttk.Frame(paned)
+        paned.add(tree_monitor_frame, weight=1)
+
+        # Directory Tree (top part)
+        tree_frame = ttk.Frame(tree_monitor_frame)
+        tree_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
         tree_scroll = ttk.Scrollbar(tree_frame)
         tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        
+
         self.dir_tree = ttk.Treeview(tree_frame, yscrollcommand=tree_scroll.set)
         self.dir_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         tree_scroll.config(command=self.dir_tree.yview)
-        
+
+        self.dir_tree.heading("#0", text="Directory Structure")
+        self.dir_tree.bind("<Double-1>", self.on_tree_double_click)
+        self.dir_tree.bind("<Button-3>", self.show_context_menu)
+
+        # System Monitor (bottom part)
+        monitor_frame = ttk.LabelFrame(tree_monitor_frame, text="System Monitor", padding=(10, 5))
+        monitor_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
+
+        monitor_label = ttk.Label(monitor_frame, text="System Monitor", font=("Segoe UI", 10, "bold"))
+        monitor_label.pack(anchor="w")
+
+        self.cpu_label = ttk.Label(monitor_frame, text="CPU: ")
+        self.cpu_label.pack(anchor="w")
+        self.mem_label = ttk.Label(monitor_frame, text="Memory: ")
+        self.mem_label.pack(anchor="w")
+        self.disk_label = ttk.Label(monitor_frame, text="Disk: ")
+        self.disk_label.pack(anchor="w")
+        self.battery_label = ttk.Label(monitor_frame, text="Battery: ")
+        self.battery_label.pack(anchor="w")
+
+        self.update_monitor()
+
         self.dir_tree.heading("#0", text="Directory Structure")
         self.dir_tree.bind("<Double-1>", self.on_tree_double_click)
         self.dir_tree.bind("<Button-3>", self.show_context_menu)
@@ -218,6 +244,35 @@ class ImprovedMiniShell:
 
         welcome_message = (
             "\n"
+            "⠀⠀⠀⠀⠀⠀⠀⢷⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣀⣀⣀⣀⣀⣀⣀⣀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡴⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⠀⠀⠀⠙⠓⠀⠀⠀⠀⠀⣠⣤⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣶⣦⣄⣠⡤⠒⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣤⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⢾⣤⣤⣤⣴⣶⣶⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⠙⠻⣿⣿⣿⣿⣿⣯⣿⣿⣿⣭⣭⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⠀⠀⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣆⠀⠀⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⠀⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⠀⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⣰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⢀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡄⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣟⣿⢿⣿⣿⣿⣿⣿⣿⡀⠀⠀⠀\n"
+            "⠀⠀⢀⣾⣿⣿⣿⣿⣿⣿⣿⣿⡿⠃⣿⣿⣿⣿⣿⣿⣿⠹⣿⣿⣿⣿⣿⣿⠟⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⠻⠆⠀⠀\n"
+            "⠀⠰⠿⠿⠿⣿⣿⣿⣿⣿⣿⡿⠀⢠⣿⣿⣿⣿⣿⣿⣿⡄⣿⣿⣿⣿⣿⣿⠀⢹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⠑⠊⠙⣿⣿⣿⠿⠿⠿⠛⠃⠙⠛⣛⣿⣿⣿⣄⡸⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⡧⣴⡾⠿⠿⠿⣭⡄⠀⠀⠀⠀⠀⠠⠽⠛⠻⠟⠿⣿⣻⠶⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⡅⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⡇⠀\n"
+            "⠀⠀⠀⠀⠀⢻⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⡿⠋⠉⠉⠻⣿⣿⣿⣿⣿⣿⣿⣿⡀⠀\n"
+            "⠀⠀⢀⡤⣤⡔⢻⣿⣿⣿⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⣷⢾⣍⠙⠆⢸⣿⣿⣿⣿⣿⣿⣿⣦⠀\n"
+            "⠀⢠⠃⢠⡟⠁⢸⣿⣿⣿⣿⡄⠀⠀⠀⠀⠀⠀⠈⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⡧⠴⠋⠀⣠⣿⣿⣿⣿⣿⣿⣿⣿⣷⠀\n"
+            "⣦⡇⠀⣿⠁⣸⣻⣿⣿⣿⠿⣧⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣼⣿⣿⣿⣿⣀⣠⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀\n"
+            "⡇⢻⠀⠻⠀⠉⠀⠉⠻⣿⣿⣿⣿⣿⣶⣦⣤⣀⣀⡀⠀⠀⠀⠀⠀⠀⢀⣤⣴⣾⣿⣿⣿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡄\n"
+            "⡇⠀⠁⠀⢰⣾⣿⣧⣤⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⡄⠀⠀⠀⢸⣿⣿⣿⣿⣿⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇\n"
+            "⢣⠀⠀⣄⡈⠛⠿⠁⠀⣰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇\n"
+            "⠀⢁⠀⠈⡷⠀⠀⢀⣔⣹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠇⠀⠀⠀⠀⢻⣿⠿⠛⠉⠀⢿⣿⣿⣿⣿⣿⣿⣿⣿⣟⣾⣿⣿⣿⣿⣿⠃\n"
+            "⠀⠀⢃⠀⠀⠀⢠⠎⠁⣿⣿⣿⣿⣿⣿⣿⡿⢿⣿⣿⠟⠁⠀⣀⣤⠴⠛⠉⠀⠀⠀⠀⠀⠈⢻⣿⣿⣿⣿⣿⣿⣿⣻⣿⣿⣿⣿⣿⣿⠀\n"
+            "⠀⠀⢸⠀⠀⠀⠸⣀⠀⠘⣿⣿⣿⣿⠟⠋⣀⣾⣋⣤⡤⠖⠛⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⢿⣿⣿⡇⠀\n"
+            "⠀⠀⠈⡅⠀⠀⠀⢹⠀⠀⢠⡼⠛⠁⠀⠀⠀⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⣿⣿⣿⣿⣿⣿⡏⢸⣿⡿⠀⠀\n"
+            "⠀⠀⠀⢱⠀⠀⠀⠈⣿⣠⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⢻⡉⠉⠉⠉⠀⠈⠉⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠁⠀⠀⠀⠈⣹⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢳⠀⠀⠀⠀⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠘⣄⠀⠀⢰⡏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀\n"
             "╔══════════════════════════════════════════════════════════════╗\n"
             "║                     IMPROVED MINI SHELL                      ║\n"
             "╠══════════════════════════════════════════════════════════════╣\n"
@@ -450,6 +505,7 @@ class ImprovedMiniShell:
                     
         except Exception as e:
             self.log(f"Error: {str(e)}", "error")
+            
             
         self.status_var.set("Ready")
 
@@ -1150,6 +1206,20 @@ class ImprovedMiniShell:
         close_button = tk.Button(settings_window, text="Close", command=settings_window.destroy)
         close_button.pack(pady=10)
 
+    def update_monitor(self):
+        cpu = psutil.cpu_percent()
+        memory = psutil.virtual_memory().percent
+        disk = psutil.disk_usage('/').percent
+        battery = psutil.sensors_battery().percent if psutil.sensors_battery() else "N/A"
+
+        self.cpu_label.config(text=f"CPU: {cpu}%")
+        self.mem_label.config(text=f"Memory: {memory}%")
+        self.disk_label.config(text=f"Disk: {disk}%")
+        self.battery_label.config(text=f"Battery: {battery}%")
+
+        self.root.after(1000, self.update_monitor)
+
+    
     def quit(self):
         """Quit the application"""
         if messagebox.askokcancel("Quit", "Do you want to quit?"):
