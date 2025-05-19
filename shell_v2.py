@@ -67,6 +67,8 @@ class ImprovedMiniShell:
         theme_menu.add_command(label="Light Theme", command=lambda: self.load_theme("light"))
         theme_menu.add_command(label="Dark Theme", command=lambda: self.load_theme("dark"))
         theme_menu.add_command(label="Monokai", command=lambda: self.load_theme("monokai"))
+        theme_menu.add_command(label="Dark Theme", command=lambda: self.load_theme("dark"))
+
         
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
@@ -80,6 +82,17 @@ class ImprovedMiniShell:
         ttk.Button(toolbar, text="←", width=2, command=lambda: self.go_dir("..")).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Home", width=5, command=lambda: self.go_dir(os.path.expanduser("~"))).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Refresh", width=7, command=self.update_directory_tree).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="+ Tab", command=self.add_new_terminal_tab).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="× Tab", command=self.close_current_tab).pack(side=tk.LEFT, padx=2)
+
+        
+        # Notebook untuk tab terminal
+        self.notebook = ttk.Notebook(self.main_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        self.terminals = []  # Menyimpan semua output dan entry untuk tiap tab
+        
+        self.add_new_terminal_tab()  # Buat tab pertama saat aplikasi dijalankan
         
         # Path display
         self.path_var = tk.StringVar()
@@ -188,6 +201,12 @@ class ImprovedMiniShell:
         style.map("Treeview",
                 background=[("selected", select_bg)],
                 foreground=[("selected", fg_color)])
+                
+        for output, entry in self.terminals:
+            output.config(
+                bg=bg_color, fg=fg_color, insertbackground=fg_color, selectbackground=select_bg
+            )
+            entry.config(background=entry_bg, foreground=fg_color)
 
         # Save current theme
         self.current_theme = theme_name
@@ -452,6 +471,65 @@ class ImprovedMiniShell:
             self.log(f"Error: {str(e)}", "error")
             
         self.status_var.set("Ready")
+        
+    def run_command_multi(self, output, entry):
+        command = entry.get().strip()
+        entry.delete(0, tk.END)
+    
+        if not command:
+            return
+
+        output.config(state='normal')
+        output.insert(tk.END, f"> {command}\n", "input")
+        output.see(tk.END)
+        output.config(state='disabled')
+
+        try:
+            result = subprocess.run(command, shell=True, capture_output=True, text=True)
+            output.config(state='normal')
+            if result.stdout:
+                output.insert(tk.END, result.stdout)
+            if result.stderr:
+                output.insert(tk.END, result.stderr, "error")
+            output.see(tk.END)
+            output.config(state='disabled')
+        except Exception as e:
+            output.config(state='normal')
+            output.insert(tk.END, f"Error: {str(e)}\n", "error")
+            output.config(state='disabled')
+    
+    def add_new_terminal_tab(self):
+        terminal_frame = ttk.Frame(self.notebook)
+        self.notebook.add(terminal_frame, text=f"Tab {len(self.terminals) + 1}")
+
+        output = scrolledtext.ScrolledText(
+            terminal_frame, height=20, width=80,
+            state='disabled', wrap=tk.WORD, font=("Consolas", 10)
+        )
+        output.pack(fill=tk.BOTH, expand=True)
+        output.tag_configure("error", foreground="red")
+        output.tag_configure("success", foreground="green")
+        output.tag_configure("input", foreground="cyan")
+        output.tag_configure("info", foreground="yellow")
+
+        entry = ttk.Entry(terminal_frame)
+        entry.pack(fill=tk.X, padx=5, pady=2)
+        entry.bind("<Return>", lambda e, o=output, en=entry: self.run_command_multi(o, en))
+
+        self.terminals.append((output, entry))
+        self.notebook.select(len(self.terminals) - 1)
+        
+    def close_current_tab(self):
+        current_index = self.notebook.index("current")
+    
+        # Jangan hapus kalau hanya ada satu tab
+        if len(self.terminals) <= 1:
+            self.show_warning("Tidak bisa menutup satu-satunya tab.")
+            return
+    
+        # Hapus tab dari notebook dan list terminals
+        self.notebook.forget(current_index)
+        del self.terminals[current_index]
 
     def cmd_list_directory(self, args):
         """Enhanced ls command with formatting and options"""
