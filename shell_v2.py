@@ -13,6 +13,8 @@ import threading
 from tkinter import simpledialog
 import getpass
 from datetime import datetime
+import zipfile
+import psutil
 
 class ImprovedMiniShell:
     def __init__(self, root):
@@ -33,7 +35,7 @@ class ImprovedMiniShell:
         else:
             self.clear_cmd = "clear"
             
-        self.show_welcome_message()
+        # self.show_welcome_message()
         self.update_directory_tree()
         self.entry.focus_set()
 
@@ -67,8 +69,6 @@ class ImprovedMiniShell:
         theme_menu.add_command(label="Light Theme", command=lambda: self.load_theme("light"))
         theme_menu.add_command(label="Dark Theme", command=lambda: self.load_theme("dark"))
         theme_menu.add_command(label="Monokai", command=lambda: self.load_theme("monokai"))
-        theme_menu.add_command(label="Dark Theme", command=lambda: self.load_theme("dark"))
-
         
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
@@ -80,19 +80,11 @@ class ImprovedMiniShell:
         toolbar.pack(side=tk.TOP, fill=tk.X)
         
         ttk.Button(toolbar, text="←", width=2, command=lambda: self.go_dir("..")).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Home", width=5, command=lambda: self.go_dir(os.path.expanduser("~"))).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="Home", width=6, command=lambda: self.go_dir(os.path.expanduser("~"))).pack(side=tk.LEFT, padx=2, )
         ttk.Button(toolbar, text="Refresh", width=7, command=self.update_directory_tree).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="+ Tab", command=self.add_new_terminal_tab).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="× Tab", command=self.close_current_tab).pack(side=tk.LEFT, padx=2)
-
-        
-        # Notebook untuk tab terminal
-        self.notebook = ttk.Notebook(self.main_frame)
-        self.notebook.pack(fill=tk.BOTH, expand=True, pady=5)
-        
-        self.terminals = []  # Menyimpan semua output dan entry untuk tiap tab
-        
-        self.add_new_terminal_tab()  # Buat tab pertama saat aplikasi dijalankan
+        # Add button to create new tabs
+        ttk.Button(toolbar, text="+ Tab", width=6, command=self.add_new_tab).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(toolbar, text="x Close Tab", width=7, command=self.close_current_tab).pack(side=tk.RIGHT, padx=5)
         
         # Path display
         self.path_var = tk.StringVar()
@@ -105,18 +97,43 @@ class ImprovedMiniShell:
         paned = ttk.PanedWindow(self.main_frame, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True, pady=5)
         
-        # Left panel - directory tree
-        tree_frame = ttk.Frame(paned)
-        paned.add(tree_frame, weight=1)
-        
-        # Directory Tree with scrollbar
+        # Left panel - directory + monitor
+        tree_monitor_frame = ttk.Frame(paned)
+        paned.add(tree_monitor_frame, weight=1)
+
+        # Directory Tree (top part)
+        tree_frame = ttk.Frame(tree_monitor_frame)
+        tree_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
         tree_scroll = ttk.Scrollbar(tree_frame)
         tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        
+
         self.dir_tree = ttk.Treeview(tree_frame, yscrollcommand=tree_scroll.set)
         self.dir_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         tree_scroll.config(command=self.dir_tree.yview)
-        
+
+        self.dir_tree.heading("#0", text="Directory Structure")
+        self.dir_tree.bind("<Double-1>", self.on_tree_double_click)
+        self.dir_tree.bind("<Button-3>", self.show_context_menu)
+
+        # System Monitor (bottom part)
+        monitor_frame = ttk.LabelFrame(tree_monitor_frame, text="System Monitor", padding=(10, 5))
+        monitor_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
+
+        monitor_label = ttk.Label(monitor_frame, text="System Monitor", font=("Segoe UI", 10, "bold"))
+        monitor_label.pack(anchor="w")
+
+        self.cpu_label = ttk.Label(monitor_frame, text="CPU: ")
+        self.cpu_label.pack(anchor="w")
+        self.mem_label = ttk.Label(monitor_frame, text="Memory: ")
+        self.mem_label.pack(anchor="w")
+        self.disk_label = ttk.Label(monitor_frame, text="Disk: ")
+        self.disk_label.pack(anchor="w")
+        self.battery_label = ttk.Label(monitor_frame, text="Battery: ")
+        self.battery_label.pack(anchor="w")
+
+        self.update_monitor()
+
         self.dir_tree.heading("#0", text="Directory Structure")
         self.dir_tree.bind("<Double-1>", self.on_tree_double_click)
         self.dir_tree.bind("<Button-3>", self.show_context_menu)
@@ -125,43 +142,53 @@ class ImprovedMiniShell:
         terminal_frame = ttk.Frame(paned)
         paned.add(terminal_frame, weight=3)
         
+        # Right panel - terminal with notebook
+        self.tab_control = ttk.Notebook(terminal_frame)
+        self.tab_control.pack(fill=tk.BOTH, expand=True)
+        
+        self.tabs = []
+        self.add_new_tab()
+        
         # Terminal Output with scrollbar
-        self.output = scrolledtext.ScrolledText(
-            terminal_frame, 
-            height=20, 
-            width=80, 
-            state='disabled', 
-            wrap=tk.WORD,
-            font=("Consolas", 10)
-        )
-        self.output.pack(fill=tk.BOTH, expand=True)
-        self.output.tag_configure("error", foreground="red")
-        self.output.tag_configure("success", foreground="green")
-        self.output.tag_configure("input", foreground="cyan")
-        self.output.tag_configure("info", foreground="yellow")
+        # self.output = scrolledtext.ScrolledText(
+        #     terminal_frame, 
+        #     # height=20, 
+        #     # width=80, 
+        #     state='disabled', 
+        #     wrap=tk.WORD,
+        #     font=("Consolas", 10)
+        # )
+        # self.output.pack(fill=tk.BOTH, expand=True)
+        # self.output.tag_configure("error", foreground="red")
+        # self.output.tag_configure("success", foreground="green")
+        # self.output.tag_configure("input", foreground="cyan")
+        # self.output.tag_configure("info", foreground="yellow")
         
-        # Bind right-click menu to output
-        self.output.bind("<Button-3>", self.show_output_context_menu)
+        # # Bind right-click menu to output
+        # self.output.bind("<Button-3>", self.show_output_context_menu)
         
-        # Command Entry
-        entry_frame = ttk.Frame(self.main_frame)
-        entry_frame.pack(fill=tk.X, pady=5)
+        # # Command Entry
+        # entry_frame = ttk.Frame(self.main_frame)
+        # entry_frame.pack(fill=tk.X, pady=5)
         
-        prompt_label = ttk.Label(entry_frame, text="> ")
-        prompt_label.pack(side=tk.LEFT)
+        # prompt_label = ttk.Label(entry_frame, text="> ")
+        # prompt_label.pack(side=tk.LEFT)
         
-        self.entry = ttk.Entry(entry_frame)
-        self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.entry.bind("<Return>", self.run_command)
-        self.entry.bind("<Up>", self.navigate_history_up)
-        self.entry.bind("<Down>", self.navigate_history_down)
-        self.entry.bind("<Tab>", self.autocomplete)
+        # self.entry = ttk.Entry(entry_frame)
+        # self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        # # Add button to create new tabs
+        # add_tab_btn = ttk.Button(entry_frame, text="+ Tab", width=6, command=self.add_new_tab)
+        # add_tab_btn.pack(side=tk.RIGHT, padx=5)
+        # self.entry.bind("<Return>", self.run_command)
+        # self.entry.bind("<Up>", self.navigate_history_up)
+        # self.entry.bind("<Down>", self.navigate_history_down)
+        # self.entry.bind("<Tab>", self.autocomplete)
         
-        # Status bar
-        self.status_var = tk.StringVar()
-        self.status_var.set("Ready")
-        status_bar = ttk.Label(self.main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        # # Status bar
+        # self.status_var = tk.StringVar()
+        # self.status_var.set("Ready")
+        # status_bar = ttk.Label(self.main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
+        # status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
     def load_theme(self, theme_name):
         """Load a color theme for the shell"""
@@ -190,7 +217,13 @@ class ImprovedMiniShell:
         style.configure("TLabel", background=bg_color, foreground=fg_color)
         style.configure("TButton", background=bg_color, foreground=fg_color)
         style.map("TButton", background=[("active", select_bg)])
-        
+        style.configure("TScrollbar", background=bg_color, troughcolor=bg_color)
+        style.configure("TFrame", background=bg_color)
+        style.configure("TNotebook", background=bg_color, foreground=fg_color, borderwidth=0)
+        style.configure("TNotebook.Tab", background=bg_color, foreground=fg_color)
+        style.map("TNotebook.Tab", 
+                  background=[("selected", select_bg)], 
+                  foreground=[("selected", fg_color)])
         self.output.config(bg=bg_color, fg=fg_color, insertbackground=fg_color, selectbackground=select_bg)
         # self.dir_tree.configure(background=bg_color, foreground=fg_color)
         style.configure("Treeview",
@@ -201,32 +234,217 @@ class ImprovedMiniShell:
         style.map("Treeview",
                 background=[("selected", select_bg)],
                 foreground=[("selected", fg_color)])
-                
-        for output, entry in self.terminals:
-            output.config(
-                bg=bg_color, fg=fg_color, insertbackground=fg_color, selectbackground=select_bg
-            )
-            entry.config(background=entry_bg, foreground=fg_color)
+    
+        for output, _ in self.tabs:
+            output.config(bg=bg_color, fg=fg_color, insertbackground=fg_color, selectbackground=select_bg)
+            # entry.config(bg=entry_bg, fg=fg_color, insertbackground=fg_color)
 
         # Save current theme
         self.current_theme = theme_name
         self.status_var.set(f"Theme changed to {theme_name}")
 
-    # def show_welcome_message(self):
-    #     """Display welcome message with basic information"""
-    #     welcome_message = f"""
-    #     ╔════════════════════════════════════════════════════════╗
-    #     ║               IMPROVED MINI SHELL                      ║
-    #     ╚════════════════════════════════════════════════════════╝
+    def apply_theme_to_tab(self, output):
+        """Apply the current theme to a specific tab's output area"""
+        if not hasattr(self, 'current_theme'):
+            return  # No theme set yet
+            
+        # Get theme colors based on current theme
+        if self.current_theme == "light":
+            bg_color = "#ffffff"
+            fg_color = "#000000"
+            select_bg = "#a6d2ff"
+        elif self.current_theme == "dark":
+            bg_color = "#282c34"
+            fg_color = "#abb2bf"
+            select_bg = "#3e4451"
+        elif self.current_theme == "monokai":
+            bg_color = "#272822"
+            fg_color = "#f8f8f2"
+            select_bg = "#49483e"
+                
+        # Apply theme to the specific output widget
+        output.config(bg=bg_color, fg=fg_color, insertbackground=fg_color, selectbackground=select_bg)
+            
+    def add_new_tab(self):
+        frame = tk.Frame(self.tab_control)
+        self.tab_control.add(frame, text=f"Tab {len(self.tabs) + 1}", padding=(5, 5))
+        # self.apply_theme_to_tab(output, entry)
+
+        self.tab_control.pack(fill=tk.BOTH, expand=True)
+
         
-    #     Welcome to ImprovedMiniShell - A powerful shell interface
+        output = scrolledtext.ScrolledText(
+            frame,
+            height=20,
+            width=80,
+            state='disabled',
+            wrap=tk.WORD,
+            font=("Consolas", 10)
+        )
+        output.pack(fill=tk.BOTH, expand=True)
+        output.tag_configure("error", foreground="red")
+        output.tag_configure("success", foreground="green")
+        output.tag_configure("input", foreground="cyan")
+        output.tag_configure("info", foreground="yellow")
         
-    #     System: {platform.system()} {platform.release()}
-    #     Python: {platform.python_version()}
+        # Entry field per tab
+        entry_frame = ttk.Frame(frame)
+        entry_frame.pack(fill=tk.X)
         
-    #     Type 'help' to see available commands
-    #     """
-    #     self.log(welcome_message, "info")
+        prompt_label = ttk.Label(entry_frame, text="> ")
+        prompt_label.pack(side=tk.LEFT)
+        
+        entry = ttk.Entry(entry_frame)
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        entry.bind("<Return>", lambda e, ent=entry, out=output: self.run_command_from_tab(ent, out))
+        entry.bind("<Up>", self.navigate_history_up)
+        entry.bind("<Down>", self.navigate_history_down)
+        entry.bind("<Tab>", self.autocomplete)
+        
+        # Right-click menu for tab close
+        output.bind("<Button-3>", lambda e: self.show_output_context_menu(e, frame))
+        
+        self.tabs.append((output, entry))
+        
+        # Redirect log output
+        self.output = output
+        self.entry = entry
+        self.tab_control.select(len(self.tabs) - 1)
+        self.show_welcome_message()
+
+        # Status bar
+        self.status_var = tk.StringVar()
+        self.status_var.set("Ready")
+        status_bar = ttk.Label(self.main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
+        # status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+    
+        if hasattr(self, 'current_theme'):
+            self.apply_theme_to_tab(output)
+
+    def close_current_tab(self):
+        current = self.tab_control.select()
+        if current:
+            frame = self.tab_control.nametowidget(current)
+            self.close_tab(frame)
+            
+    def run_command_from_tab(self, entry_widget, output_widget):
+        command = entry_widget.get().strip()
+        entry_widget.delete(0, tk.END)
+        if not command:
+            return
+            
+        self.output = output_widget  # arahkan output ke tab aktif
+        self.entry = entry_widget    # arahkan input ke tab aktif
+        self.entry.focus()
+        
+        self.history.append(command)
+        self.history_index = len(self.history)
+        
+        self.log(f"> {command}", "input")
+        # Selanjutnya tinggal panggil handler lama:
+        self.execute_command(command)
+        
+    def execute_command(self, command):
+        """Logika utama yang memproses command (dipisah dari run_command)"""
+        # Salin isi dari self.run_command(), tapi tanpa bagian ambil dari self.entry
+        if not command:
+            return
+            
+        # Parsing command
+        args = []
+        in_quotes = False
+        quote_char = None
+        current_arg = ""
+        
+        for char in command:
+            if char in ['"', "'"]:
+                if not in_quotes:
+                    in_quotes = True
+                    quote_char = char
+                elif quote_char == char:
+                    in_quotes = False
+                    quote_char = None
+                else:
+                    current_arg += char
+            elif char.isspace() and not in_quotes:
+                if current_arg:
+                    args.append(current_arg)
+                    current_arg = ""
+            else:
+                current_arg += char
+        if current_arg:
+            args.append(current_arg)
+            
+        if not args:
+            return
+
+        cmd = args[0].lower()
+
+        try:
+            if cmd == "ls" or cmd == "dir":
+                self.cmd_list_directory(args[1:])
+            elif cmd == "cd":
+                self.cmd_change_directory(args[1:])
+            elif cmd == "mkdir":
+                self.cmd_make_directory(args[1:])
+            elif cmd == "touch" or cmd == "new-item":
+                self.cmd_create_file(args[1:])
+            elif cmd == "rm" or cmd == "del":
+                self.cmd_remove(args[1:])
+            elif cmd == "cp" or cmd == "copy":
+                self.cmd_copy(args[1:])
+            elif cmd == "mv" or cmd == "move":
+                self.cmd_move(args[1:])
+            elif cmd == "cat" or cmd == "type":
+                self.cmd_cat(args[1:])
+            elif cmd == "pwd":
+                self.log(self.cwd)
+            elif cmd == "echo":
+                self.log(" ".join(args[1:]))
+            elif cmd == "clear" or cmd == "cls":
+                self.clear_terminal()
+            elif cmd == "find" or cmd == "search":
+                self.cmd_find(args[1:])
+            elif cmd == "grep":
+                self.cmd_grep(args[1:])
+            elif cmd == "chmod":
+                self.cmd_chmod(args[1:])
+            elif cmd == "history":
+                self.cmd_history()
+            elif cmd == "zip" or cmd == "compress":
+                self.cmd_zip(args[1:])
+            elif cmd == "unzip" or cmd == "extract":
+                self.cmd_unzip(args[1:])
+            elif cmd == "whoami":
+                self.cmd_whoami()
+            elif cmd == "date":
+                self.log(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            elif cmd == "bg":
+                self.cmd_background(args[1:])
+            elif cmd == "jobs":
+                self.cmd_jobs()
+            elif cmd == "help":
+                self.show_help()
+            elif cmd == "exit" or cmd == "quit":
+                if self.background_tasks:
+                    if messagebox.askyesno("Background Tasks", "There are background tasks running. Exit anyway?"):
+                        self.root.quit()
+                else:
+                    self.root.quit()
+            elif cmd.startswith("!"):
+                try:
+                    index = int(cmd[1:])
+                    if 0 <= index < len(self.history):
+                        self.entry.insert(0, self.history[index])
+                except ValueError:
+                    self.log(f"Invalid history index: {cmd[1:]}", "error")
+            else:
+                self.run_system_command(args)
+
+        except Exception as e:
+            self.log(f"Error: {str(e)}", "error")
+
+        self.status_var.set("Ready")
 
     def show_welcome_message(self):
         """Display a styled welcome message with system info and basic instructions."""
@@ -237,16 +455,42 @@ class ImprovedMiniShell:
 
         welcome_message = (
             "\n"
+            "⠀⠀⠀⠀⠀⠀⠀⢷⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣀⣀⣀⣀⣀⣀⣀⣀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡴⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⠀⠀⠀⠙⠓⠀⠀⠀⠀⠀⣠⣤⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣶⣦⣄⣠⡤⠒⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣤⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⢾⣤⣤⣤⣴⣶⣶⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⠙⠻⣿⣿⣿⣿⣿⣯⣿⣿⣿⣭⣭⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⠀⠀⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣆⠀⠀⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⠀⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⠀⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⣰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⢀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡄⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣟⣿⢿⣿⣿⣿⣿⣿⣿⡀⠀⠀⠀\n"
+            "⠀⠀⢀⣾⣿⣿⣿⣿⣿⣿⣿⣿⡿⠃⣿⣿⣿⣿⣿⣿⣿⠹⣿⣿⣿⣿⣿⣿⠟⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⠻⠆⠀⠀\n"
+            "⠀⠰⠿⠿⠿⣿⣿⣿⣿⣿⣿⡿⠀⢠⣿⣿⣿⣿⣿⣿⣿⡄⣿⣿⣿⣿⣿⣿⠀⢹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⠑⠊⠙⣿⣿⣿⠿⠿⠿⠛⠃⠙⠛⣛⣿⣿⣿⣄⡸⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⡧⣴⡾⠿⠿⠿⣭⡄⠀⠀⠀⠀⠀⠠⠽⠛⠻⠟⠿⣿⣻⠶⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡀⠀⠀\n"
+            "⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⡅⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⡇⠀\n"
+            "⠀⠀⠀⠀⠀⢻⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⡿⠋⠉⠉⠻⣿⣿⣿⣿⣿⣿⣿⣿⡀⠀\n"
+            "⠀⠀⢀⡤⣤⡔⢻⣿⣿⣿⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿⣷⢾⣍⠙⠆⢸⣿⣿⣿⣿⣿⣿⣿⣦⠀\n"
+            "⠀⢠⠃⢠⡟⠁⢸⣿⣿⣿⣿⡄⠀⠀⠀⠀⠀⠀⠈⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⡧⠴⠋⠀⣠⣿⣿⣿⣿⣿⣿⣿⣿⣷⠀\n"
+            "⣦⡇⠀⣿⠁⣸⣻⣿⣿⣿⠿⣧⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣼⣿⣿⣿⣿⣀⣠⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀\n"
+            "⡇⢻⠀⠻⠀⠉⠀⠉⠻⣿⣿⣿⣿⣿⣶⣦⣤⣀⣀⡀⠀⠀⠀⠀⠀⠀⢀⣤⣴⣾⣿⣿⣿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡄\n"
+            "⡇⠀⠁⠀⢰⣾⣿⣧⣤⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⡄⠀⠀⠀⢸⣿⣿⣿⣿⣿⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇\n"
+            "⢣⠀⠀⣄⡈⠛⠿⠁⠀⣰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇\n"
+            "⠀⢁⠀⠈⡷⠀⠀⢀⣔⣹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠇⠀⠀⠀⠀⢻⣿⠿⠛⠉⠀⢿⣿⣿⣿⣿⣿⣿⣿⣿⣟⣾⣿⣿⣿⣿⣿⠃\n"
+            "⠀⠀⢃⠀⠀⠀⢠⠎⠁⣿⣿⣿⣿⣿⣿⣿⡿⢿⣿⣿⠟⠁⠀⣀⣤⠴⠛⠉⠀⠀⠀⠀⠀⠈⢻⣿⣿⣿⣿⣿⣿⣿⣻⣿⣿⣿⣿⣿⣿⠀\n"
+            "⠀⠀⢸⠀⠀⠀⠸⣀⠀⠘⣿⣿⣿⣿⠟⠋⣀⣾⣋⣤⡤⠖⠛⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⢿⣿⣿⡇⠀\n"
+            "⠀⠀⠈⡅⠀⠀⠀⢹⠀⠀⢠⡼⠛⠁⠀⠀⠀⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⣿⣿⣿⣿⣿⣿⡏⢸⣿⡿⠀⠀\n"
+            "⠀⠀⠀⢱⠀⠀⠀⠈⣿⣠⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⢻⡉⠉⠉⠉⠀⠈⠉⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠁⠀⠀⠀⠈⣹⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢳⠀⠀⠀⠀⠀⠀⠀⠀⠀\n"
+            "⠀⠀⠀⠀⠘⣄⠀⠀⢰⡏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀\n"
             "╔══════════════════════════════════════════════════════════════╗\n"
-            "║                     IMPROVED MINI SHELL                      ║\n"
+            "║                     MINI SHELL                               ║\n"
             "╠══════════════════════════════════════════════════════════════╣\n"
             f"║  User    : {username:<50}║\n"
             f"║  Time    : {current_time:<50}║\n"
             f"║  System  : {system_info:<50}║\n"
             f"║  Python  : {python_info:<50}║\n"
-            "╠══════════════════════════════════════════════════════════════╣\n"
-            "║  Welcome to ImprovedMiniShell - A powerful shell interface   ║\n"
-            "║  Type 'help' to see available commands                       ║\n"
             "╚══════════════════════════════════════════════════════════════╝\n"
         )
         self.log(welcome_message, "info")
@@ -331,14 +575,24 @@ class ImprovedMiniShell:
             context_menu.add_command(label="Delete", command=lambda: self.delete_item(path))
             context_menu.post(event.x_root, event.y_root)
 
-    def show_output_context_menu(self, event):
-        """Show context menu for terminal output"""
+    def show_output_context_menu(self, event, frame=None):
         context_menu = tk.Menu(self.root, tearoff=0)
         context_menu.add_command(label="Copy", command=self.copy_selection)
         context_menu.add_command(label="Select All", command=lambda: self.output.tag_add(tk.SEL, "1.0", tk.END))
         context_menu.add_command(label="Clear", command=self.clear_terminal)
+        if frame:
+            context_menu.add_command(label="Close Tab", command=lambda: self.close_tab(frame))
         context_menu.post(event.x_root, event.y_root)
-
+        
+    def close_tab(self, frame):
+        index = self.tab_control.index(frame)
+        self.tab_control.forget(frame)
+        del self.tabs[index]
+        if self.tabs:
+            self.output = self.tabs[-1]  # fallbac
+        else:
+            self.output = None
+        
     def log(self, message, tag=None):
         """Write message to the output terminal with optional tag for styling"""
         self.output.config(state='normal')
@@ -363,6 +617,7 @@ class ImprovedMiniShell:
         
         # Log the command with input formatting
         self.log(f"> {command}", "input")
+        self.execute_command(command)
         
         # Parse command and arguments
         args = []
@@ -470,66 +725,8 @@ class ImprovedMiniShell:
         except Exception as e:
             self.log(f"Error: {str(e)}", "error")
             
+            
         self.status_var.set("Ready")
-        
-    def run_command_multi(self, output, entry):
-        command = entry.get().strip()
-        entry.delete(0, tk.END)
-    
-        if not command:
-            return
-
-        output.config(state='normal')
-        output.insert(tk.END, f"> {command}\n", "input")
-        output.see(tk.END)
-        output.config(state='disabled')
-
-        try:
-            result = subprocess.run(command, shell=True, capture_output=True, text=True)
-            output.config(state='normal')
-            if result.stdout:
-                output.insert(tk.END, result.stdout)
-            if result.stderr:
-                output.insert(tk.END, result.stderr, "error")
-            output.see(tk.END)
-            output.config(state='disabled')
-        except Exception as e:
-            output.config(state='normal')
-            output.insert(tk.END, f"Error: {str(e)}\n", "error")
-            output.config(state='disabled')
-    
-    def add_new_terminal_tab(self):
-        terminal_frame = ttk.Frame(self.notebook)
-        self.notebook.add(terminal_frame, text=f"Tab {len(self.terminals) + 1}")
-
-        output = scrolledtext.ScrolledText(
-            terminal_frame, height=20, width=80,
-            state='disabled', wrap=tk.WORD, font=("Consolas", 10)
-        )
-        output.pack(fill=tk.BOTH, expand=True)
-        output.tag_configure("error", foreground="red")
-        output.tag_configure("success", foreground="green")
-        output.tag_configure("input", foreground="cyan")
-        output.tag_configure("info", foreground="yellow")
-
-        entry = ttk.Entry(terminal_frame)
-        entry.pack(fill=tk.X, padx=5, pady=2)
-        entry.bind("<Return>", lambda e, o=output, en=entry: self.run_command_multi(o, en))
-
-        self.terminals.append((output, entry))
-        self.notebook.select(len(self.terminals) - 1)
-        
-    def close_current_tab(self):
-        current_index = self.notebook.index("current")
-    
-        # Jangan hapus kalau hanya ada satu tab
-        if len(self.terminals) <= 1:
-            self.show_warning("Tidak bisa menutup satu-satunya tab.")
-            return
-    
-        # Hapus tab dari notebook dan list terminals
-        self.notebook.forget(current_index)
-        del self.terminals[current_index]
 
     def cmd_list_directory(self, args):
         """Enhanced ls command with formatting and options"""
@@ -836,6 +1033,7 @@ class ImprovedMiniShell:
     #                         found_items.append(f"./{rel_path}")
                             
                     # Match files
+
 
     def cmd_find(self, args):
         """Find files and directories"""
@@ -1228,6 +1426,20 @@ class ImprovedMiniShell:
         close_button = tk.Button(settings_window, text="Close", command=settings_window.destroy)
         close_button.pack(pady=10)
 
+    def update_monitor(self):
+        cpu = psutil.cpu_percent()
+        memory = psutil.virtual_memory().percent
+        disk = psutil.disk_usage('/').percent
+        battery = psutil.sensors_battery().percent if psutil.sensors_battery() else "N/A"
+
+        self.cpu_label.config(text=f"CPU: {cpu}%")
+        self.mem_label.config(text=f"Memory: {memory}%")
+        self.disk_label.config(text=f"Disk: {disk}%")
+        self.battery_label.config(text=f"Battery: {battery}%")
+
+        self.root.after(1000, self.update_monitor)
+
+    
     def quit(self):
         """Quit the application"""
         if messagebox.askokcancel("Quit", "Do you want to quit?"):
